@@ -33,7 +33,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if providerName == provider.NameCodex {
-		return runCodexSetup()
+		return runCodexSetup(cmd)
 	}
 
 	backendURL, err := cmd.Flags().GetString("backend-url")
@@ -151,10 +151,18 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCodexSetup() error {
+func runCodexSetup(cmd *cobra.Command) error {
+	backendURL, err := cmd.Flags().GetString("backend-url")
+	if err != nil {
+		return fmt.Errorf("failed to get backend-url flag: %w", err)
+	}
+
 	fmt.Println("Setting up Confab for Codex")
 	fmt.Println()
-	fmt.Println("Installing Codex hooks...")
+	fmt.Printf("Backend URL: %s\n", backendURL)
+	fmt.Println("Backend mode: dry-run only for Codex in this phase")
+	fmt.Println()
+	fmt.Println("Installing Codex hooks in ~/.codex/config.toml...")
 	fmt.Println("Enabling Codex feature flag: features.codex_hooks = true")
 
 	configPath, err := provider.Codex{}.InstallHooks()
@@ -164,8 +172,9 @@ func runCodexSetup() error {
 	}
 
 	fmt.Println()
-	fmt.Printf("✅ Setup complete. Codex dry-run sync hooks installed in %s\n", configPath)
-	fmt.Println("Codex sessions will be logged locally and will not be uploaded to the backend yet.")
+	fmt.Printf("✅ Setup complete. Codex hooks installed in %s\n", configPath)
+	fmt.Println("Codex rollout files will be dry-run synced to the local Confab log.")
+	fmt.Println("No Codex sessions will be uploaded to the backend yet.")
 	return nil
 }
 

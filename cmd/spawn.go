@@ -65,6 +65,15 @@ func maybeSpawnCodexDaemon(hookInput *types.CodexHookInput) (spawned bool, err e
 		return false, fmt.Errorf("transcript_path is required to spawn daemon")
 	}
 
+	codex := provider.Codex{}
+	if info, err := codex.ReadSessionInfo(hookInput.TranscriptPath); err == nil && !info.IsUserSession() {
+		logger.Info("Skipping Codex daemon for non-user rollout: session_id=%s thread_source=%s agent_path=%s agent_role=%s agent_nickname=%s",
+			hookInput.SessionID, info.ThreadSource, info.AgentPath, info.AgentRole, info.AgentNickname)
+		return false, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("failed to inspect Codex rollout: %w", err)
+	}
+
 	existingState, err := daemon.LoadStateForProvider(provider.NameCodex, hookInput.SessionID)
 	if err != nil {
 		logger.Warn("Error checking existing Codex state: %v", err)

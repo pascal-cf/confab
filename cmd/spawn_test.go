@@ -173,6 +173,179 @@ func TestMaybeSpawnDaemon(t *testing.T) {
 	})
 }
 
+func TestMaybeSpawnCodexDaemon(t *testing.T) {
+	origSpawnCodexDaemon := spawnCodexDaemonFunc
+	defer func() { spawnCodexDaemonFunc = origSpawnCodexDaemon }()
+
+	t.Run("spawns daemon for user rollout", func(t *testing.T) {
+		tmpDir := setupCodexSyncTestEnv(t)
+
+		var spawnCalled bool
+		var spawnedInput *types.CodexHookInput
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			spawnCalled = true
+			spawnedInput = hookInput
+			return nil
+		}
+
+		sessionID := "11111111-1111-1111-1111-111111111111"
+		rolloutPath := writeCodexTestRollout(t, tmpDir, sessionID, `"thread_source":"user","cwd":"/work/user"`)
+
+		spawned, err := maybeSpawnCodexDaemon(&types.CodexHookInput{
+			SessionID:      sessionID,
+			TranscriptPath: rolloutPath,
+			CWD:            "/work/user",
+			HookEventName:  "SessionStart",
+		})
+		if err != nil {
+			t.Fatalf("maybeSpawnCodexDaemon failed: %v", err)
+		}
+		if !spawned {
+			t.Fatal("expected spawned=true for user rollout")
+		}
+		if !spawnCalled {
+			t.Fatal("expected spawnCodexDaemonFunc to be called")
+		}
+		if spawnedInput == nil || spawnedInput.SessionID != sessionID {
+			t.Fatalf("spawned input session = %v, want %s", spawnedInput, sessionID)
+		}
+	})
+
+	t.Run("does not spawn for startup resume or clear when already running", func(t *testing.T) {
+		for _, source := range []string{"startup", "resume", "clear"} {
+			t.Run(source, func(t *testing.T) {
+				tmpDir := setupCodexSyncTestEnv(t)
+
+				spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+					t.Fatal("should not spawn when Codex daemon is already running")
+					return nil
+				}
+
+				sessionID := "22222222-2222-2222-2222-222222222222"
+				rolloutPath := writeCodexTestRollout(t, tmpDir, sessionID, `"thread_source":"user","cwd":"/work/user"`)
+				state := daemon.NewStateForProvider(provider.NameCodex, sessionID, rolloutPath, "/work/user", 0)
+				state.PID = os.Getpid()
+				if err := state.Save(); err != nil {
+					t.Fatalf("failed to save state: %v", err)
+				}
+
+				spawned, err := maybeSpawnCodexDaemon(&types.CodexHookInput{
+					SessionID:      sessionID,
+					TranscriptPath: rolloutPath,
+					CWD:            "/work/user",
+					HookEventName:  "SessionStart",
+					Source:         source,
+				})
+				if err != nil {
+					t.Fatalf("maybeSpawnCodexDaemon failed: %v", err)
+				}
+				if spawned {
+					t.Fatal("expected spawned=false when daemon is already running")
+				}
+			})
+		}
+	})
+
+	t.Run("spawns when state exists but daemon is dead", func(t *testing.T) {
+		tmpDir := setupCodexSyncTestEnv(t)
+
+		var spawnCalled bool
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			spawnCalled = true
+			return nil
+		}
+
+		sessionID := "33333333-3333-3333-3333-333333333333"
+		rolloutPath := writeCodexTestRollout(t, tmpDir, sessionID, `"thread_source":"user","cwd":"/work/user"`)
+		state := daemon.NewStateForProvider(provider.NameCodex, sessionID, rolloutPath, "/work/user", 0)
+		state.PID = 999999
+		if err := state.Save(); err != nil {
+			t.Fatalf("failed to save stale state: %v", err)
+		}
+
+		spawned, err := maybeSpawnCodexDaemon(&types.CodexHookInput{
+			SessionID:      sessionID,
+			TranscriptPath: rolloutPath,
+			CWD:            "/work/user",
+		})
+		if err != nil {
+			t.Fatalf("maybeSpawnCodexDaemon failed: %v", err)
+		}
+		if !spawned || !spawnCalled {
+			t.Fatal("expected stale Codex state to allow respawn")
+		}
+	})
+
+	t.Run("skips subagent rollout", func(t *testing.T) {
+		tmpDir := setupCodexSyncTestEnv(t)
+
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			t.Fatal("should not spawn for Codex subagent rollout")
+			return nil
+		}
+
+		sessionID := "44444444-4444-4444-4444-444444444444"
+		rolloutPath := writeCodexTestRollout(t, tmpDir, sessionID, `"thread_source":"subagent","cwd":"/work/agent","agent_role":"reviewer"`)
+
+		spawned, err := maybeSpawnCodexDaemon(&types.CodexHookInput{
+			SessionID:      sessionID,
+			TranscriptPath: rolloutPath,
+			CWD:            "/work/agent",
+		})
+		if err != nil {
+			t.Fatalf("maybeSpawnCodexDaemon failed: %v", err)
+		}
+		if spawned {
+			t.Fatal("expected spawned=false for subagent rollout")
+		}
+	})
+
+	t.Run("allows fresh rollout path before file exists", func(t *testing.T) {
+		tmpDir := setupCodexSyncTestEnv(t)
+
+		var spawnCalled bool
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			spawnCalled = true
+			return nil
+		}
+
+		sessionID := "55555555-5555-5555-5555-555555555555"
+		rolloutPath := codexTestRolloutPath(tmpDir, sessionID)
+
+		spawned, err := maybeSpawnCodexDaemon(&types.CodexHookInput{
+			SessionID:      sessionID,
+			TranscriptPath: rolloutPath,
+			CWD:            "/work/user",
+		})
+		if err != nil {
+			t.Fatalf("maybeSpawnCodexDaemon failed: %v", err)
+		}
+		if !spawned || !spawnCalled {
+			t.Fatal("expected missing fresh rollout file to allow spawn")
+		}
+	})
+
+	t.Run("fails when transcript path is missing", func(t *testing.T) {
+		setupCodexSyncTestEnv(t)
+
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			t.Fatal("should not spawn when transcript_path is missing")
+			return nil
+		}
+
+		spawned, err := maybeSpawnCodexDaemon(&types.CodexHookInput{
+			SessionID: "66666666-6666-6666-6666-666666666666",
+			CWD:       "/work/user",
+		})
+		if err == nil {
+			t.Fatal("expected missing transcript path error")
+		}
+		if spawned {
+			t.Fatal("expected spawned=false when transcript path is missing")
+		}
+	})
+}
+
 func TestSpawnDaemonWritesState(t *testing.T) {
 	// This test verifies that spawnDaemonImpl writes state immediately
 	// We can't easily test the real impl (it spawns processes), but we
@@ -207,6 +380,33 @@ func TestSpawnDaemonWritesState(t *testing.T) {
 			t.Errorf("expected transcript_path %q, got %q", transcriptPath, loadedState.TranscriptPath)
 		}
 	})
+}
+
+func setupCodexSyncTestEnv(t *testing.T) string {
+	t.Helper()
+	tmpDir := setupSyncTestEnv(t)
+	t.Setenv(provider.CodexStateDirEnv, filepath.Join(tmpDir, ".codex"))
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".codex", "sessions"), 0700); err != nil {
+		t.Fatalf("failed to create Codex sessions dir: %v", err)
+	}
+	return tmpDir
+}
+
+func codexTestRolloutPath(tmpDir, sessionID string) string {
+	return filepath.Join(tmpDir, ".codex", "sessions", "2026", "05", "13", "rollout-2026-05-13T00-00-00-"+sessionID+".jsonl")
+}
+
+func writeCodexTestRollout(t *testing.T, tmpDir, sessionID, metaFields string) string {
+	t.Helper()
+	path := codexTestRolloutPath(tmpDir, sessionID)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatalf("failed to create Codex rollout dir: %v", err)
+	}
+	line := `{"type":"session_meta","payload":{"id":"` + sessionID + `",` + metaFields + `}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0600); err != nil {
+		t.Fatalf("failed to write Codex rollout: %v", err)
+	}
+	return path
 }
 
 func TestUserPromptSubmitSpawnsDaemon(t *testing.T) {

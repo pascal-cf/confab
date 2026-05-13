@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ConfabulousDev/confab/pkg/config"
+	"github.com/ConfabulousDev/confab/pkg/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -394,6 +396,71 @@ func TestSetupCmd_BackendURLRequired(t *testing.T) {
 	if _, ok := annotations[cobra.BashCompOneRequiredFlag]; !ok {
 		t.Error("expected backend-url flag to be marked as required")
 	}
+}
+
+func TestRunCodexSetupOutput(t *testing.T) {
+	tmpDir, _ := setupSetupTestEnv(t, "https://example.invalid")
+	codexDir := filepath.Join(tmpDir, ".codex")
+	t.Setenv(provider.CodexStateDirEnv, codexDir)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("backend-url", "https://confab.example", "")
+
+	output := captureStdout(t, func() {
+		if err := runCodexSetup(cmd); err != nil {
+			t.Fatalf("runCodexSetup failed: %v", err)
+		}
+	})
+
+	wantSnippets := []string{
+		"Backend URL: https://confab.example",
+		"Backend mode: dry-run only for Codex in this phase",
+		"Enabling Codex feature flag: features.codex_hooks = true",
+		"Codex hooks installed in",
+		"No Codex sessions will be uploaded to the backend yet.",
+	}
+	for _, want := range wantSnippets {
+		if !strings.Contains(output, want) {
+			t.Fatalf("setup output missing %q\noutput:\n%s", want, output)
+		}
+	}
+
+	configPath := filepath.Join(codexDir, "config.toml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read Codex config: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "codex_hooks = true") {
+		t.Fatal("expected Codex feature flag to be enabled")
+	}
+	if !strings.Contains(content, "hook session-start --provider codex") {
+		t.Fatal("expected Codex session-start hook command")
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = origStdout
+	}()
+
+	fn()
+
+	w.Close()
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read captured stdout: %v", err)
+	}
+	return string(data)
 }
 
 func TestRunSetup_HookInstallationFails(t *testing.T) {

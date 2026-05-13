@@ -52,13 +52,13 @@ Checklist:
 
 ## Later Checkpoints
 
-- [ ] Backend `tool_name` support: additive request field, backend default for legacy clients, dedup by `(user_id, tool_name, external_id)`.
+- [ ] Backend provider support: additive request field, backend default for legacy clients, dedup by `(user_id, provider, external_id)`.
 - [ ] Cleanup compatibility shims after provider ownership is stable: move remaining path and hook parsing callers directly to provider APIs, then remove wrappers that no runtime code needs.
 - [ ] CLI provider selection: introduce `--provider claude-code|codex` surgically on commands with real provider-specific behavior.
 - [ ] Codex provider: implement real Codex paths, rollout discovery, hook payload parsing, and hook config writing from current Codex docs/source.
 - [ ] Codex daemon behavior: run the real daemon lifecycle against Codex rollout files, but route backend calls to a local dry-run backend until backend support exists.
 - [ ] Transcript normalization: add backend and frontend normalization keyed by tool name before enabling analytics/Smart Recap for Codex.
-- [ ] Codex subagents: quick-follow TODO. Model separate rollout files and parent relationships from `thread_source=subagent`, `agent_path`, `agent_role`, and `agent_nickname`.
+- [ ] Codex subagents: quick-follow TODO after root Codex backend upload. Model separate rollout files and parent relationships from Codex SQLite relationship state plus rollout `session_meta`.
 - [ ] Skills: revisit `/til` and `/retro` separately; Claude slash-command skills should remain Claude-specific until Codex has a well-defined surface.
 
 ## Decisions
@@ -74,10 +74,33 @@ Checklist:
 - Codex session identity is parsed from rollout filenames matching `rollout-<timestamp>-<uuid>.jsonl`.
 - Codex rollout `session_meta` is parsed for metadata and top-level filtering. `confab list --provider codex` includes user sessions only: missing/`user` `thread_source`, and no `agent_path`, `agent_role`, or `agent_nickname`.
 - Codex local discovery reads rollout JSONL files only. Do not read Codex SQLite state in the first Codex CLI slice.
+- Codex backend init should send top-level `provider`. Missing provider on backend requests must default to `claude-code` for old clients.
+- Backend session uniqueness should be `(user_id, provider, external_id)`. Session files inherit provider from their parent session.
+- Codex root rollout files should continue using `file_type="transcript"` for first backend integration.
 - Codex hook install should match Claude's seamless setup posture: preserve existing user config, make backups, install idempotently, enable `features.codex_hooks = true`, and clearly surface that feature flag change in CLI output.
 - Codex hooks should use existing handler shapes with explicit provider selection, e.g. `confab hook session-start --provider codex`.
 - Provider selection flags should be added only where they have real behavior.
 - Daemon state should be provider-aware going forward, while preserving legacy Claude state file lookup and cleanup for existing users.
+
+## Codex Subagent Notes
+
+Subagent upload is postponed until after root Codex backend upload works.
+
+Codex subagents differ from Claude Code sidechains. Claude Code stores subagents as files under the parent session directory, so Confab can upload them as `file_type="agent"` on the same backend session. Codex subagents are separate rollout-backed threads with their own session IDs. They should eventually be uploaded as separate backend sessions linked to their parent, not forced into Claude's agent-file shape.
+
+For Codex subagents, SQLite should be treated as the relationship index and rollout JSONL as the transcript source of truth:
+
+- Use Codex SQLite state for parent-child traversal, for example `thread_spawn_edges` when available.
+- Use rollout files for uploaded content and provider-owned metadata parsing.
+- Resolve parent -> child IDs through SQLite, then resolve child IDs to rollout files, then parse each child rollout before upload.
+- Do not infer parent-child relationships from parent conversation text or `spawn_agent` tool output.
+- Do not upload guessed relationships. If the SQLite relationship or child rollout cannot be verified, skip the relationship and log locally.
+
+Likely backend shape for subagents:
+
+- Root and child Codex rollouts both create sessions with `provider="codex"`.
+- Child sessions carry optional relationship metadata such as `parent_external_id`, `thread_source`, `agent_path`, `agent_role`, `agent_nickname`, and depth if available.
+- Backend resolves parent links within the same provider namespace.
 
 ## Compatibility Shims (Future Cleanup)
 

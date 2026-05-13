@@ -238,6 +238,119 @@ func TestSessionStartFromReader(t *testing.T) {
 	})
 }
 
+func TestCodexSessionStartFromReader(t *testing.T) {
+	origSpawnCodexDaemon := spawnCodexDaemonFunc
+	defer func() { spawnCodexDaemonFunc = origSpawnCodexDaemon }()
+
+	t.Run("valid user hook input spawns daemon", func(t *testing.T) {
+		tmpDir := setupCodexSyncTestEnv(t)
+
+		var spawnCalled bool
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			spawnCalled = true
+			return nil
+		}
+
+		sessionID := "77777777-7777-7777-7777-777777777777"
+		rolloutPath := writeCodexTestRollout(t, tmpDir, sessionID, `"thread_source":"user","cwd":"/work/user"`)
+		inputJSON, _ := json.Marshal(map[string]string{
+			"session_id":      sessionID,
+			"transcript_path": rolloutPath,
+			"cwd":             "/work/user",
+			"hook_event_name": "SessionStart",
+			"source":          "startup",
+		})
+
+		if err := codexSessionStartFromReader(strings.NewReader(string(inputJSON))); err != nil {
+			t.Fatalf("codexSessionStartFromReader failed: %v", err)
+		}
+		if !spawnCalled {
+			t.Fatal("expected Codex daemon spawn for user rollout")
+		}
+	})
+
+	t.Run("fresh rollout path can spawn before file exists", func(t *testing.T) {
+		tmpDir := setupCodexSyncTestEnv(t)
+
+		var spawnCalled bool
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			spawnCalled = true
+			return nil
+		}
+
+		sessionID := "88888888-8888-8888-8888-888888888888"
+		inputJSON, _ := json.Marshal(map[string]string{
+			"session_id":      sessionID,
+			"transcript_path": codexTestRolloutPath(tmpDir, sessionID),
+			"cwd":             "/work/user",
+			"hook_event_name": "SessionStart",
+			"source":          "resume",
+		})
+
+		if err := codexSessionStartFromReader(strings.NewReader(string(inputJSON))); err != nil {
+			t.Fatalf("codexSessionStartFromReader failed: %v", err)
+		}
+		if !spawnCalled {
+			t.Fatal("expected Codex daemon spawn for fresh rollout path")
+		}
+	})
+
+	t.Run("subagent rollout is skipped", func(t *testing.T) {
+		tmpDir := setupCodexSyncTestEnv(t)
+
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			t.Fatal("should not spawn for Codex subagent rollout")
+			return nil
+		}
+
+		sessionID := "99999999-9999-9999-9999-999999999999"
+		rolloutPath := writeCodexTestRollout(t, tmpDir, sessionID, `"thread_source":"subagent","cwd":"/work/agent","agent_role":"reviewer"`)
+		inputJSON, _ := json.Marshal(map[string]string{
+			"session_id":      sessionID,
+			"transcript_path": rolloutPath,
+			"cwd":             "/work/agent",
+			"hook_event_name": "SessionStart",
+			"source":          "startup",
+		})
+
+		if err := codexSessionStartFromReader(strings.NewReader(string(inputJSON))); err != nil {
+			t.Fatalf("codexSessionStartFromReader failed: %v", err)
+		}
+	})
+
+	t.Run("missing transcript path fails soft", func(t *testing.T) {
+		setupCodexSyncTestEnv(t)
+
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			t.Fatal("should not spawn when Codex transcript_path is missing")
+			return nil
+		}
+
+		inputJSON, _ := json.Marshal(map[string]string{
+			"session_id":      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			"cwd":             "/work/user",
+			"hook_event_name": "SessionStart",
+		})
+
+		if err := codexSessionStartFromReader(strings.NewReader(string(inputJSON))); err != nil {
+			t.Fatalf("codexSessionStartFromReader should fail soft: %v", err)
+		}
+	})
+
+	t.Run("invalid JSON fails soft", func(t *testing.T) {
+		setupCodexSyncTestEnv(t)
+
+		spawnCodexDaemonFunc = func(hookInput *types.CodexHookInput) error {
+			t.Fatal("should not spawn on invalid Codex hook input")
+			return nil
+		}
+
+		if err := codexSessionStartFromReader(strings.NewReader("not valid json")); err != nil {
+			t.Fatalf("codexSessionStartFromReader should fail soft: %v", err)
+		}
+	})
+}
+
 func TestSessionEndFromReader(t *testing.T) {
 	t.Run("daemon not running", func(t *testing.T) {
 		tmpDir := setupSyncTestEnv(t)
@@ -302,6 +415,25 @@ func TestSessionEndFromReader(t *testing.T) {
 		err := sessionEndFromReader(strings.NewReader(string(inputJSON)))
 		if err != nil {
 			t.Fatalf("sessionEndFromReader should not return error: %v", err)
+		}
+	})
+}
+
+func TestCodexSessionEndFromReader(t *testing.T) {
+	t.Run("stop hook accepts null transcript path", func(t *testing.T) {
+		setupCodexSyncTestEnv(t)
+
+		inputJSON := `{"session_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","transcript_path":null,"hook_event_name":"Stop"}`
+		if err := codexSessionEndFromReader(strings.NewReader(inputJSON)); err != nil {
+			t.Fatalf("codexSessionEndFromReader failed: %v", err)
+		}
+	})
+
+	t.Run("invalid JSON fails soft", func(t *testing.T) {
+		setupCodexSyncTestEnv(t)
+
+		if err := codexSessionEndFromReader(strings.NewReader("not valid json")); err != nil {
+			t.Fatalf("codexSessionEndFromReader should fail soft: %v", err)
 		}
 	})
 }
