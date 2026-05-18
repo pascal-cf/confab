@@ -9,8 +9,8 @@ Hook install/uninstall logic lives in `pkg/hookconfig`. This package owns the ge
 | File | Role |
 |------|------|
 | `config.go` | `ClaudeSettings` struct + `AtomicUpdateSettings` (read/modify/write `~/.claude/settings.json` with mtime-based optimistic locking). Generic accessor helpers: `GetHooksMap`, `GetEventHooks`, `SetEventHooks`. Tool-name constants used by `pkg/hookconfig`. |
-| `upload.go` | Confab config: read/write `~/.confab/config.json`, validation, default redaction patterns |
-| `paths.go` | Path resolution with environment variable overrides |
+| `upload.go` | Confab config: read/write `~/.confab/config.json`, validation, default redaction patterns, `ParseLogLevel` |
+| `paths.go` | Claude state-dir resolution (`~/.claude`) with `CONFAB_CLAUDE_DIR` override. `~/.confab` paths use `pkg/confabpath`. |
 | `skill.go` | Generic skill installer (`skill` struct + `path`/`Install`/`Uninstall`/`Installed`). Each skill file in this package collapses to a template + a `var` of this type + three thin wrappers. |
 | `skill_til.go` | `/til` Claude Code skill: template + thin wrappers around `skill.Install/Uninstall/Installed`. Installs to `~/.claude/skills/til/`. |
 | `skill_retro.go` | `/retro` Claude Code skill: template + thin wrappers around `skill.Install/Uninstall/Installed`. Installs to `~/.claude/skills/retro/`. |
@@ -29,6 +29,7 @@ Managed by `skill.go` (generic installer) plus one `skill_<name>.go` per skill (
 ## Key Types
 
 - **`UploadConfig`** — Confab's configuration (backend URL, API key, redaction settings)
+- **`ParseLogLevel(string)`** — translates a config `log_level` value to `logger.Level`. Called from `pkg/loginit` at process startup.
 - **`ClaudeSettings`** — Wrapper around `map[string]any` for Claude Code settings, preserving unknown fields
 - **`ErrHooksTypeMismatch`** — Exported sentinel error returned when the `"hooks"` field in `settings.json` exists but is not a JSON object. Callers can check `errors.Is(err, ErrHooksTypeMismatch)` and surface a clear message asking users to fix the file manually.
 - **`RedactionConfig`** — Redaction enabled flag, use_default_patterns, custom pattern list
@@ -73,6 +74,6 @@ Tests cover atomic settings updates under concurrency, field preservation across
 
 ## Dependencies
 
-**Uses:** `pkg/logger` (logging). `paths.go` deliberately does not import `pkg/provider` even though it owns parallel constants — `pkg/provider` imports `pkg/hookconfig`, which imports `pkg/config`. The duplicated `ClaudeStateDirEnv` constant must stay in sync between the two packages.
+**Uses:** `pkg/confabpath` (`~/.confab` path-builder for `getConfigPath`), `pkg/logger` (logging from `config.go`, `skill_*.go`). `paths.go` deliberately does not import `pkg/provider` even though it owns parallel constants — `pkg/provider` imports `pkg/hookconfig`, which imports `pkg/config`. The duplicated `ClaudeStateDirEnv` constant must stay in sync between the two packages.
 
-**Used by:** `cmd/` (setup, login, hooks, status), `pkg/daemon/` (state dir), `pkg/hookconfig/` (settings struct, atomic update, tool-name constants), `pkg/http/` (upload config), `pkg/provider/` (Claude paths, skills install), `pkg/redactor/` (redaction patterns), `pkg/sync/` (upload config)
+**Used by:** `cmd/` (setup, login, hooks, status), `pkg/daemon/` (state dir), `pkg/hookconfig/` (settings struct, atomic update, tool-name constants), `pkg/http/` (upload config), `pkg/loginit/` (`GetUploadConfig`, `ParseLogLevel`), `pkg/provider/` (Claude paths, skills install), `pkg/redactor/` (redaction patterns), `pkg/sync/` (upload config)
