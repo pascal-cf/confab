@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/ConfabulousDev/confab/pkg/config"
 	"github.com/ConfabulousDev/confab/pkg/hookconfig"
@@ -299,26 +298,9 @@ func (p Codex) ValidateRolloutPath(path string) error {
 	}
 
 	cleaned := filepath.Clean(path)
-	parentDir := filepath.Dir(cleaned)
-	resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
-	resolvedPath := ""
-	if parentErr == nil {
-		resolvedPath = filepath.Join(resolvedParent, filepath.Base(cleaned))
-	}
-
-	cleanRoot := filepath.Clean(sessionsDir)
-	resolvedRoot, err := filepath.EvalSymlinks(cleanRoot)
-	if err != nil {
-		resolvedRoot = cleanRoot
-	}
-	if parentErr == nil {
-		if strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator)) {
-			return nil
-		}
-	} else if strings.HasPrefix(cleaned, cleanRoot+string(filepath.Separator)) {
+	if pathIsUnderAnyRoot(cleaned, []string{sessionsDir}) {
 		return nil
 	}
-
 	return fmt.Errorf("must be under Codex sessions directory (%s)", sessionsDir)
 }
 

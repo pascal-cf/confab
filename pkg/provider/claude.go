@@ -273,36 +273,10 @@ func (p ClaudeCode) ValidateTranscriptPath(path string) error {
 		allowedRoots = append(allowedRoots, envDir)
 	}
 
-	parentDir := filepath.Dir(cleaned)
-	resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
-	resolvedPath := ""
-	if parentErr == nil {
-		resolvedPath = filepath.Join(resolvedParent, filepath.Base(cleaned))
+	if pathIsUnderAnyRoot(cleaned, allowedRoots) {
+		return nil
 	}
-
-	for _, root := range allowedRoots {
-		cleanRoot := filepath.Clean(root)
-		resolvedRoot, err := filepath.EvalSymlinks(root)
-		if err != nil {
-			resolvedRoot = cleanRoot
-		}
-		if parentErr == nil {
-			if strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator)) {
-				return nil
-			}
-		} else {
-			// The transcript parent may not exist yet when a fresh hook fires.
-			// In that case fall back to lexical validation after the traversal check above.
-			if strings.HasPrefix(cleaned, cleanRoot+string(filepath.Separator)) {
-				return nil
-			}
-		}
-	}
-
-	if len(allowedRoots) > 0 {
-		return fmt.Errorf("must be under Claude projects directory (%s)", projectsDir)
-	}
-	return fmt.Errorf("must be under Claude projects directory")
+	return fmt.Errorf("must be under Claude projects directory (%s)", projectsDir)
 }
 
 // FindParentPID walks up the process tree to find the Claude Code process.
