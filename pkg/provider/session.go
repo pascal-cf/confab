@@ -2,6 +2,8 @@ package provider
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ConfabulousDev/confab/pkg/types"
@@ -43,6 +45,38 @@ type SessionInfo struct {
 	SizeBytes        int64
 	Summary          string
 	FirstUserMessage string
+}
+
+// pathIsUnderAnyRoot reports whether cleaned (an absolute, cleaned path)
+// lies under any of the allowedRoots after resolving parent-directory
+// symlinks. Falls back to lexical containment if symlink resolution fails.
+func pathIsUnderAnyRoot(cleaned string, allowedRoots []string) bool {
+	parentDir := filepath.Dir(cleaned)
+	resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
+	resolvedPath := ""
+	if parentErr == nil {
+		resolvedPath = filepath.Join(resolvedParent, filepath.Base(cleaned))
+	}
+
+	for _, root := range allowedRoots {
+		cleanRoot := filepath.Clean(root)
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			resolvedRoot = cleanRoot
+		}
+		if parentErr == nil {
+			if strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator)) {
+				return true
+			}
+		} else {
+			// The file's parent may not exist yet when a fresh hook fires.
+			// Fall back to lexical containment.
+			if strings.HasPrefix(cleaned, cleanRoot+string(filepath.Separator)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SessionMetadata is the parsed metadata for a transcript file or in-memory
